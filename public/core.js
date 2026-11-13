@@ -1,0 +1,43 @@
+(function(root){
+'use strict';
+const pad=n=>String(n).padStart(2,'0'), id=()=>crypto.randomUUID(), str=(v,n=30000)=>typeof v==='string'?v.slice(0,n):'';
+const localDate=(d=new Date())=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+function validDate(s){if(!/^\d{4}-\d{2}-\d{2}$/.test(s))return false;const d=new Date(s+'T12:00:00');return !isNaN(d)&&localDate(d)===s;}
+function validDue(s){return !s||validDate(s.slice(0,10))&&(s.length===10||/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/.test(s));}
+const dueTime=s=>s?new Date(s.length===10?s+'T23:59:59':s).getTime():Infinity;
+function deadline(text,base){
+ if(!validDate(base))return {due:'',warning:'原消息日期无效，请补充'};
+ const d=new Date(base+'T12:00:00');let date='',warning='';
+ const marked=text.split(/[。；;\n]/).filter(s=>/截止|最晚|之前|前提交|前完成|提交时间/.test(s));const src=marked.length===1?marked[0]:text;
+ const full=src.match(/(20\d{2})[年\/-](\d{1,2})[月\/-](\d{1,2})日?/),md=src.match(/(\d{1,2})月(\d{1,2})日?/),week=src.match(/(下下|下|本|这)?(?:周|星期)([一二三四五六日天])/);
+ if(full)date=`${full[1]}-${pad(full[2])}-${pad(full[3])}`;
+ else if(md){date=`${d.getFullYear()}-${pad(md[1])}-${pad(md[2])}`;warning='原文未给年份，请核对';}
+ else if(/今天|今晚|明天|明晚|后天/.test(src)){d.setDate(d.getDate()+(/后天/.test(src)?2:/明天|明晚/.test(src)?1:0));date=localDate(d);}
+ else if(week){let delta='一二三四五六日'.indexOf(week[2]==='天'?'日':week[2])-(d.getDay()+6)%7;if(week[1]==='下')delta+=7;else if(week[1]==='下下')delta+=14;else if(!week[1]&&delta<0)delta+=7;d.setDate(d.getDate()+delta);date=localDate(d);warning='已按原消息所在周换算，请核对具体日期';}
+ if(date&&!validDate(date))return {due:'',warning:'原文日期无效，请核对'};
+ const clock=src.match(/(?:^|[^\d])([01]?\d|2[0-3])[:：]([0-5]\d)(?!\d)/),hour=src.match(/(凌晨|上午|中午|下午|晚上|晚)?\s*([01]?\d|2[0-3])\s*[点时](?:(半)|([0-5]?\d)分?)?/);let time='';
+ if(clock){let h=+clock[1];if(/下午|晚上|晚间/.test(src.slice(Math.max(0,clock.index-4),clock.index+2))&&h<12)h+=12;time=pad(h)+':'+clock[2];}
+ else if(hour){let h=+hour[2];if(/下午|晚上|晚/.test(hour[1]||'')&&h<12)h+=12;if(hour[1]==='凌晨'&&h===12)h=0;time=pad(h)+':'+(hour[3]?'30':pad(hour[4]||0));}
+ if(!date)return {due:'',warning:'截止日期待补充'};
+ const dates=text.match(/20\d{2}[年\/-]\d{1,2}[月\/-]\d{1,2}|\d{1,2}月\d{1,2}日|(?:下|本|这)?周[一二三四五六日天]|今天|明天|后天/g)||[];
+ if(dates.length>1&&marked.length!==1)return {due:'',warning:'原文包含多个日期，请手动选择截止时间'};
+ return {due:date+(time?'T'+time:''),warning:warning||(time?'已提取日期与时间，请核对':'原文未写具体时刻，按仅日期保存')};
+}
+function relevance(raw,p={}){const ids=[p.name,p.className,p.group,...(p.courses||'').split(/[，,、\n]/)].map(x=>(x||'').trim()).filter(Boolean);const a=raw.match(/(?:适用对象|仅限|面向)[：:]?([^，。\n]+)/);if(a&&!ids.some(x=>a[1].includes(x)))return {relevance:'适用对象待核对：'+a[1],relevanceKey:'check'};if(/全体|所有同学|所有人|全班|大家/.test(raw)||ids.some(x=>raw.includes(x)))return {relevance:'全体通知或匹配我的资料',relevanceKey:'match'};return {relevance:'未限定对象，请核对',relevanceKey:'unknown'};}
+function extract(text,{source='',course='',base=localDate(),profile={}}={}){
+ return text.replace(/\r/g,'').split(/\n\s*\n|\n(?=\s*\d+[.、]\s*[^\d])/).map(s=>s.trim()).filter(Boolean).map(raw=>{const dl=deadline(raw,base);let title=raw.split(/[。\n]/)[0].replace(/^\d+[.、]\s*/,'');if(/^[^：:]{3,40}[：:]/.test(title))title=title.split(/[：:]/)[0];return normalizeTask({id:id(),title:title.slice(0,100),course,kind:/测验|考试|小测/.test(raw)?'测验':/作业|习题|报告/.test(raw)?'作业':/调课|通知|教室/.test(raw)?'通知':'事项',category:course||/作业|测验|课程|考试/.test(raw)?'学习':'个人',due:dl.due,method:raw.split(/[。\n；;]/).filter(s=>/上传|提交|发送|发至|交到|纸质|填写|拍照|在线完成/.test(s)).join('；').slice(0,500),notes:raw,source,base,raws:[{source,text:raw,base}],warning:dl.warning,...relevance(raw,profile),status:'pending',createdAt:new Date().toISOString()});});
+}
+function similar(a,b){const norm=s=>(s||'').replace(/[\s，。！？、：:,.!【】]/g,'').toLowerCase();const x=norm(a.title),y=norm(b.title);if(!x||!y||a.course&&b.course&&a.course!==b.course)return false;const nums=s=>(s.match(/\d+|[一二三四五六七八九十]+/g)||[]).join('|');if(nums(x)&&nums(y)&&nums(x)!==nums(y))return false;return x===y||Math.min(x.length,y.length)>=8&&(x.includes(y)||y.includes(x));}
+function normalizeTask(t){
+ if(!t||typeof t!=='object'||typeof t.title!=='string'||!t.title.trim())throw Error('任务标题无效');const r={id:/^[-a-zA-Z0-9]{1,100}$/.test(t.id||'')?t.id:id()};
+ for(const k of ['title','course','method','notes','source','base','warning','relevance','createdAt','updatedAt','completedAt','deletedAt'])r[k]=str(t[k],k==='notes'?30000:1000);
+ r.due=typeof t.due==='string'&&validDue(t.due)?t.due:'';r.kind=['事项','作业','测验','通知','日程'].includes(t.kind)?t.kind:'事项';r.category=['学习','工作','生活','个人'].includes(t.category)?t.category:'学习';r.priority=['普通','重要','紧急'].includes(t.priority)?t.priority:'普通';r.status=['todo','pending','done','ignored','deleted'].includes(t.status)?t.status:'pending';r.previousStatus=['todo','pending','done','ignored'].includes(t.previousStatus)?t.previousStatus:'todo';r.relevanceKey=['match','check','unknown'].includes(t.relevanceKey)?t.relevanceKey:'unknown';r.demo=t.demo===true;
+ r.plannedDate=validDate(t.plannedDate||'')?t.plannedDate:'';r.repeat=['none','daily','weekly','monthly'].includes(t.repeat)?t.repeat:'none';r.repeatAnchor=Number.isInteger(t.repeatAnchor)&&t.repeatAnchor>=1&&t.repeatAnchor<=31?t.repeatAnchor:0;r.nextOccurrenceId=str(t.nextOccurrenceId,100);r.seriesId=str(t.seriesId,100);r.estimate=[0,5,15,30,60,90,120].includes(t.estimate)?t.estimate:0;r.remindMinutes=[0,10,30,60,1440].includes(t.remindMinutes)?t.remindMinutes:30;
+ r.checklist=(Array.isArray(t.checklist)?t.checklist:[]).slice(0,100).filter(x=>x&&typeof x.text==='string'&&x.text.trim()).map(x=>({id:/^[-a-zA-Z0-9]{1,100}$/.test(x.id||'')?x.id:id(),text:str(x.text,500),done:x.done===true}));
+ r.raws=(Array.isArray(t.raws)?t.raws:[]).filter(x=>x&&typeof x.text==='string').slice(0,100).map(x=>({source:str(x.source,200),text:str(x.text),base:str(x.base,30)}));r.history=(Array.isArray(t.history)?t.history:[]).filter(h=>h&&typeof h.action==='string').slice(-100).map(h=>({action:str(h.action,100),at:str(h.at,50),detail:str(h.detail,3000)}));return r;
+}
+function normalizeState(data){if(!data||!Array.isArray(data.tasks)||!Array.isArray(data.sources))throw Error('备份格式不正确');if(data.tasks.length>10000)throw Error('单次最多恢复 10000 条事项');const tasks=data.tasks.map(normalizeTask),keys=new Set();for(const t of tasks){if(keys.has(t.id))throw Error('备份包含重复任务 ID');keys.add(t.id);}const profile={};for(const k of ['name','className','group','courses'])profile[k]=str(data.profile?.[k],1000);return {tasks,sources:[...new Set(data.sources.filter(s=>typeof s==='string'&&s.trim()).map(s=>s.slice(0,80)))],profile,imports:(Array.isArray(data.imports)?data.imports:[]).slice(-1000).filter(x=>x&&typeof x.source==='string').map(x=>({source:str(x.source,80),at:str(x.at,50),count:Number.isFinite(x.count)?x.count:0})),lastBackupAt:str(data.lastBackupAt,50),onboarded:data.onboarded===true,purged:(Array.isArray(data.purged)?data.purged:[]).filter(x=>typeof x==='string'&&/^[-a-zA-Z0-9]{1,100}$/.test(x)).slice(-10000),settings:{theme:['light','dark','system'].includes(data.settings?.theme)?data.settings.theme:'light',reminders:data.settings?.reminders===true,defaultView:['all','today'].includes(data.settings?.defaultView)?data.settings.defaultView:'all'}};}
+function calendar(tasks){const esc=s=>s.replace(/\\/g,'\\\\').replace(/\r?\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;'),stamp=d=>d.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z/,'Z');const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Task Keeper//ZH','CALSCALE:GREGORIAN'];for(const t of tasks.filter(t=>t.due&&validDue(t.due))){lines.push('BEGIN:VEVENT','UID:'+t.id+'@task-keeper','DTSTAMP:'+stamp(new Date()),'SUMMARY:'+esc(t.title),'DESCRIPTION:'+esc([t.method,t.notes,'来源：'+t.source].filter(Boolean).join('\n')));if(t.due.length===10){const d=new Date(t.due+'T12:00:00');d.setDate(d.getDate()+1);lines.push('DTSTART;VALUE=DATE:'+t.due.replaceAll('-',''),'DTEND;VALUE=DATE:'+localDate(d).replaceAll('-',''));}else{const d=new Date(t.due);lines.push('DTSTART:'+stamp(d),'DTEND:'+stamp(new Date(+d+900000)));}lines.push('BEGIN:VALARM','TRIGGER:-PT'+(t.remindMinutes??30)+'M','ACTION:DISPLAY','DESCRIPTION:'+esc(t.title),'END:VALARM','END:VEVENT');}lines.push('END:VCALENDAR');return lines.map(line=>{let out='',part='',len=0;for(const char of line){const n=new TextEncoder().encode(char).length;if(len+n>73){out+=part+'\r\n ';part='';len=1;}part+=char;len+=n;}return out+part;}).join('\r\n')+'\r\n';}
+root.StudyCore={id,localDate,validDate,validDue,dueTime,deadline,relevance,extract,similar,normalizeTask,normalizeState,calendar};if(typeof module!=='undefined')module.exports=root.StudyCore;
+})(typeof window==='undefined'?globalThis:window);
+
