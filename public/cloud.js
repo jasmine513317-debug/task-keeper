@@ -8,10 +8,10 @@
   const request=(url,options={})=>fetch(url,{...options,credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(20000)});
   window.scheduleCloudSync=()=>{queued=true;mark('pending','本机已保存 · 待同步');clearTimeout(timer);timer=setTimeout(sync,900);};
   async function sync(){
-    if(busy){queued=true;return;}if(storageFault)return;if(!navigator.onLine){mark('offline','离线 · 本机已保存');return;}
+    if(busy){queued=true;return;}if(storageFault)return;if(window.TaskAuth?.blocked){mark('account','本机数据属于其他账号 · 已暂停同步','请先在“我的”中导出或清空本机数据，再使用当前账号同步。');return;}if(!navigator.onLine){mark('offline','离线 · 本机已保存');return;}
     busy=true;queued=false;mark('syncing','正在同步');
     try{
-      const response=await request('/api/sync');
+      const response=await request(`${API_BASE}/sync`);
       if(response.status===401){mark('login','登录后同步');return;}
       if(!response.ok)throw Error('云端暂不可用，数据仍在本机');
       const remote=await response.json();if(!remote.user?.id)throw Error('同步服务返回无效身份');
@@ -22,7 +22,7 @@
       if(merged.conflicts.length)toast(`有 ${merged.conflicts.length} 项同时修改，已保留待核对副本`);
       const snapshot=structuredClone(state);
       if(!TaskSyncCore.same(snapshot,remote.state)){
-        const result=await request('/api/sync',{method:'PUT',headers:{'Content-Type':'application/json','X-Task-Keeper':'sync-v1'},body:JSON.stringify({revision:remote.revision,state:snapshot})});
+        const result=await request(`${API_BASE}/sync`,{method:'PUT',headers:{'Content-Type':'application/json','X-Task-Keeper':'sync-v1'},body:JSON.stringify({revision:remote.revision,state:snapshot})});
         if(result.status===409){meta.base=remote.state;queued=true;mark('pending','检测到新修改 · 正在重试');return;}
         if(!result.ok)throw Error('同步未完成，数据仍在本机');
         const saved=await result.json();meta.revision=saved.revision;meta.base=snapshot;

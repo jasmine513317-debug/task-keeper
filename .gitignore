@@ -194,3 +194,8 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Qoder Sites 静态站点目录是构建产物（rm -rf site && cp -r public site 后再插入 API 前缀），
+# 描述符记录的是本机的 projectId / siteId / actionId，都不进仓库。
+/site/
+*.qoder.site

@@ -9,7 +9,7 @@
    for(const id of new Set([...maps[1].keys(),...maps[2].keys()])){
      const b=maps[0].get(id),l=maps[1].get(id),r=maps[2].get(id);
      if(purged.has(id))continue;
-     if(!l){if(r)result.tasks.push(r);continue;}if(!r){result.tasks.push(l);continue;}
+     if(!l){if(r)result.tasks.push(r);continue;}if(!r){if(!b||!same(l,b))result.tasks.push(l);continue;}
      if(same(l,r)||same(l,b)){result.tasks.push(r);continue;}if(same(r,b)){result.tasks.push(l);continue;}
      // Preserve both divergent edits. Never silently reopen a completed task or drop local work.
      result.tasks.push(r);const copy=structuredClone(l);copy.id=C.id();copy.title=l.title+'（待核对副本）';copy.status='pending';copy.completedAt='';copy.warning='同一事项在不同设备上同时修改。此副本保留本机版本，请与云端版本核对。';copy.nextOccurrenceId='';copy.repeat='none';copy.updatedAt=new Date().toISOString();copy.history.push({action:'保留同步冲突副本',at:copy.updatedAt,detail:'原事项 ID：'+id});result.tasks.push(copy);conflicts.push(id);

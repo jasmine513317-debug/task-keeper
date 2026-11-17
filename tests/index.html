@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>任务管家 · 核心逻辑测试</title>
+<style>
+:root{color-scheme:light dark}
+body{margin:0 auto;padding:24px 18px 60px;max-width:62rem;font:15px/1.55 ui-sans-serif,system-ui,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
+h1{font-size:1.15rem;margin:0 0 4px}
+#summary{font-variant-numeric:tabular-nums;margin:0 0 18px;color:#5a6472}
+#summary b{color:#0b7a3b}
+#summary b.bad{color:#b3261e}
+.fail,.boot-error{border-left:3px solid #b3261e;background:#fdf1f0;padding:10px 12px;margin:0 0 8px;border-radius:0 6px 6px 0}
+.pass{border-left:3px solid #12813f;padding:6px 12px;margin:0 0 4px;color:#3d4650}
+.name{font-weight:600}
+.detail{white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.82rem;margin-top:6px;word-break:break-word}
+</style>
+</head>
+<body>
+<h1>任务管家 · 核心逻辑测试</h1>
+<p id="summary">正在运行…</p>
+<div id="output"></div>
+
+<script src="../public/core.js"></script>
+<script src="../public/quotes.js"></script>
+<script src="../public/sync-core.js"></script>
+<script type="module">
+const output = document.getElementById('output');
+const summary = document.getElementById('summary');
+
+function reportBootFailure(error) {
+  summary.innerHTML = '<b class="bad">测试未能启动</b>';
+  const box = document.createElement('p');
+  box.className = 'boot-error';
+  box.textContent = String(error && error.stack || error);
+  output.replaceChildren(box);
+}
+
+// Strict assertions, matching what node:assert/strict provides in run-node.mjs.
+const show = (value) => {
+  if (typeof value === 'string') return JSON.stringify(value);
+  try { return JSON.stringify(value); } catch { return String(value); }
+};
+const fail = (message, expected, actual) => {
+  throw Error(`${message}${expected === undefined ? '' : `\n  expected: ${show(expected)}\n  actual:   ${show(actual)}`}`);
+};
+const isDeepEqual = (x, y) => {
+  if (Object.is(x, y)) return true;
+  if (typeof x !== 'object' || typeof y !== 'object' || x === null || y === null) return false;
+  if (Array.isArray(x) !== Array.isArray(y)) return false;
+  const kx = Object.keys(x), ky = Object.keys(y);
+  if (kx.length !== ky.length || kx.some((k) => !Object.hasOwn(y, k))) return false;
+  return kx.every((k) => isDeepEqual(x[k], y[k]));
+};
+const assert = {
+  ok(value, message = 'expected a truthy value') { if (!value) fail(message, true, value); },
+  equal(actual, expected, message = 'values differ') { if (!Object.is(actual, expected)) fail(message, expected, actual); },
+  notEqual(actual, expected, message = 'values should differ') { if (Object.is(actual, expected)) fail(message, `not ${show(expected)}`, actual); },
+  deepEqual(actual, expected, message = 'structures differ') { if (!isDeepEqual(actual, expected)) fail(message, expected, actual); },
+  throws(fn, matcher, message = 'expected a throw') {
+    let thrown = null;
+    try { fn(); } catch (e) { thrown = e; }
+    if (!thrown) fail(message, 'an exception', 'no exception');
+    if (matcher && !matcher.test(String(thrown.message))) fail(`${message} (message was ${show(thrown.message)})`, matcher, thrown.message);
+  },
+  async rejects(fn, matcher, message = 'expected a rejection') {
+    let thrown = null;
+    try { await fn(); } catch (e) { thrown = e; }
+    if (!thrown) fail(message, 'a rejected promise', 'resolved normally');
+    if (matcher && !matcher.test(String(thrown.message))) fail(`${message} (message was ${show(thrown.message)})`, matcher, thrown.message);
+  },
+};
+
+try {
+  if (!window.StudyCore || !window.TaskSyncCore || !window.StudyQuotes) throw Error('core.js、quotes.js 或 sync-core.js 没有挂载全局对象');
+  const [{ buildCases, buildAuthCases }, { buildSitesCases }, AuthCore, SitesCore, SitesRoutes] = await Promise.all([
+    import('./suite.js'),
+    import('./sites-suite.js'),
+    import('../lib/auth-core.js'),
+    import('../functions/auth-core.mjs'),
+    import('../functions/routes.mjs'),
+  ]);
+  const readText = async (relative) => (await fetch(`../${relative}`, { cache: 'no-store' })).text();
+  const cases = [
+    ...buildCases(assert, window.StudyCore, window.TaskSyncCore, window.StudyQuotes),
+    ...buildAuthCases(assert, AuthCore),
+    ...buildSitesCases(assert, { application: SitesRoutes.application, SitesCore, readText }),
+  ];
+  const failures = [];
+  const fragments = document.createDocumentFragment();
+  for (const { name, fn } of cases) {
+    const line = document.createElement('p');
+    line.className = 'pass';
+    try {
+      await fn();
+      line.textContent = name;
+    } catch (error) {
+      failures.push(name);
+      line.className = 'fail';
+      const title = document.createElement('span');
+      title.className = 'name';
+      title.textContent = name;
+      const detail = document.createElement('span');
+      detail.className = 'detail';
+      detail.textContent = String(error && error.message || error);
+      line.append(title, detail);
+    }
+    fragments.append(line);
+  }
+  output.replaceChildren(fragments);
+  const head = document.createElement('b');
+  head.className = failures.length ? 'bad' : '';
+  head.textContent = failures.length ? `${failures.length} 项未通过 / 共 ${cases.length} 项` : `全部 ${cases.length} 项通过`;
+  summary.replaceChildren(head);
+  window.__testResults = { total: cases.length, failures };
+} catch (error) {
+  reportBootFailure(error);
+  window.__testResults = { total: 0, failures: ['boot'], error: String(error && error.stack || error) };
+}
+</script>
+</body>
+</html>
