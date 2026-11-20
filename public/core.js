@@ -42,6 +42,26 @@ function normalizeTask(t){
 }
 function normalizeState(data){if(!data||!Array.isArray(data.tasks)||!Array.isArray(data.sources))throw Error('备份格式不正确');if(data.tasks.length>10000)throw Error('单次最多恢复 10000 条事项');const tasks=data.tasks.map(normalizeTask),keys=new Set();for(const t of tasks){if(keys.has(t.id))throw Error('备份包含重复任务 ID');keys.add(t.id);}const profile={};for(const k of ['name','className','group','courses'])profile[k]=str(data.profile?.[k],1000);return {tasks,sources:[...new Set(data.sources.filter(s=>typeof s==='string').map(s=>s.trim().slice(0,80)).filter(Boolean))],profile,imports:(Array.isArray(data.imports)?data.imports:[]).slice(-1000).filter(x=>x&&typeof x.source==='string').map(x=>({source:str(x.source,80),at:str(x.at,50),count:Number.isFinite(x.count)?x.count:0})),lastBackupAt:str(data.lastBackupAt,50),onboarded:data.onboarded===true,purged:(Array.isArray(data.purged)?data.purged:[]).filter(x=>typeof x==='string'&&/^[-a-zA-Z0-9]{1,100}$/.test(x)).slice(-10000),settings:{theme:['light','dark','system'].includes(data.settings?.theme)?data.settings.theme:'light',reminders:data.settings?.reminders===true,defaultView:['all','today'].includes(data.settings?.defaultView)?data.settings.defaultView:'all'}};}
 function calendar(tasks){const esc=s=>s.replace(/\\/g,'\\\\').replace(/\r?\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;'),stamp=d=>d.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z/,'Z');const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Task Keeper//ZH','CALSCALE:GREGORIAN'];for(const t of tasks.filter(t=>t.due&&validDue(t.due))){lines.push('BEGIN:VEVENT','UID:'+t.id+'@task-keeper','DTSTAMP:'+stamp(new Date()),'SUMMARY:'+esc(t.title),'DESCRIPTION:'+esc([t.method,t.notes,'来源：'+t.source].filter(Boolean).join('\n')));const allDay=t.due.length===10;if(allDay){const d=new Date(t.due+'T12:00:00');d.setDate(d.getDate()+1);lines.push('DTSTART;VALUE=DATE:'+t.due.replaceAll('-',''),'DTEND;VALUE=DATE:'+localDate(d).replaceAll('-',''));}else{const d=new Date(t.due);lines.push('DTSTART:'+stamp(d),'DTEND:'+stamp(new Date(+d+900000)));}const lead=t.remindMinutes??30;if(lead>0)lines.push('BEGIN:VALARM','TRIGGER'+(allDay?';RELATED=END':'')+':-PT'+lead+'M','ACTION:DISPLAY','DESCRIPTION:'+esc(t.title),'END:VALARM');lines.push('END:VEVENT');}lines.push('END:VCALENDAR');return lines.map(line=>{let out='',part='',len=0;for(const char of line){const n=new TextEncoder().encode(char).length;if(len+n>73){out+=part+'\r\n ';part='';len=1;}part+=char;len+=n;}return out+part;}).join('\r\n')+'\r\n';}
-root.StudyCore={id,localDate,validDate,validDue,dueTime,deadline,relevance,extract,tidyOcr,similar,normalizeTask,normalizeState,calendar};if(typeof module!=='undefined')module.exports=root.StudyCore;
+// 恢复备份的合并规则放在纯数据层，界面只负责确认与写入。墓碑必须一起合并：
+// 只导入任务会让本机永久删除过的事项随备份复活，再经云同步扩散到其他设备。
+function mergeBackup(current,incoming){
+ const cur=normalizeState(current),inc=normalizeState(incoming);
+ const purged=[...new Set([...(cur.purged||[]),...(inc.purged||[])])].slice(-10000),tomb=new Set(purged);
+ const ids=new Set(cur.tasks.map(t=>t.id));
+ const fresh=inc.tasks.filter(t=>!ids.has(t.id)&&!tomb.has(t.id));
+ const resurrected=inc.tasks.length-fresh.length-inc.tasks.filter(t=>ids.has(t.id)).length;
+ const profile={};for(const k of Object.keys(cur.profile))profile[k]=cur.profile[k]||inc.profile[k];
+ const keys=new Set(cur.imports.map(x=>x.source+x.at)),imports=[...cur.imports];
+ for(const x of inc.imports)if(!keys.has(x.source+x.at))imports.push(x);
+ return {tasks:fresh,purged,sources:[...new Set([...cur.sources,...inc.sources])],profile,imports:imports.slice(-1000),added:fresh.length,kept:inc.tasks.filter(t=>ids.has(t.id)).length,resurrected};
+}
+// 备份提醒只依据最后导出时间与事项数量，不读任务内容；7 天内导出过就不打扰。
+function backupReminder(lastBackupAt,taskCount,now=Date.now()){
+ if(!taskCount)return null;
+ const stamp=lastBackupAt?Date.parse(lastBackupAt):NaN,days=Number.isFinite(stamp)?Math.floor((now-stamp)/864e5):null;
+ if(days!==null&&days<7)return null;
+ return {days,text:days===null?'还没有导出过备份':`已 ${days} 天未导出备份`};
+}
+root.StudyCore={id,localDate,validDate,validDue,dueTime,deadline,relevance,extract,tidyOcr,similar,normalizeTask,normalizeState,calendar,mergeBackup,backupReminder};if(typeof module!=='undefined')module.exports=root.StudyCore;
 })(typeof window==='undefined'?globalThis:window);
 
