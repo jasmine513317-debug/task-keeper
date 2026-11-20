@@ -338,6 +338,60 @@ export function buildCases(a, C, S, Q) {
     a.deepEqual(C.normalizeState(once), once);
   });
 
+  // ------------------------------------------------------------- mergeBackup
+  test('mergeBackup: adds new tasks and keeps the current version of shared ids', () => {
+    const cur = C.normalizeState({ tasks: [{ id: 'a', title: '本机改过的标题' }], sources: [], profile: {} });
+    const inc = C.normalizeState({ tasks: [{ id: 'a', title: '备份里的旧标题' }, { id: 'b', title: '新增' }], sources: [], profile: {} });
+    const r = C.mergeBackup(cur, inc);
+    a.equal(r.added, 1);
+    a.equal(r.kept, 1);
+    a.equal(r.resurrected, 0);
+    a.deepEqual(r.tasks.map((t) => t.id), ['b']);
+    a.ok(!r.tasks.some((t) => t.title === '备份里的旧标题'), 'shared ids are not re-imported');
+  });
+
+  test('mergeBackup: keeps tombstones so purged tasks do not come back', () => {
+    const cur = C.normalizeState({ tasks: [], sources: [], profile: {}, purged: ['gone'] });
+    const inc = C.normalizeState({ tasks: [{ id: 'gone', title: '已永久删除' }, { id: 'new', title: '新事项' }], sources: [], profile: {} });
+    const r = C.mergeBackup(cur, inc);
+    a.deepEqual(r.tasks.map((t) => t.id), ['new']);
+    a.equal(r.resurrected, 1);
+    a.ok(r.purged.includes('gone'), 'the local tombstone survives the restore');
+  });
+
+  test('mergeBackup: imports tombstones from the backup itself', () => {
+    const cur = C.normalizeState({ tasks: [], sources: [], profile: {} });
+    const inc = C.normalizeState({ tasks: [{ id: 'gone', title: 'x' }], sources: [], profile: {}, purged: ['gone'] });
+    const r = C.mergeBackup(cur, inc);
+    a.equal(r.added, 0);
+    a.deepEqual(r.purged, ['gone']);
+  });
+
+  test('mergeBackup: unions sources and imports, fills only empty profile fields', () => {
+    const cur = C.normalizeState({ tasks: [], sources: ['微信'], profile: { name: '本机名字', className: '' }, imports: [{ source: '微信', at: 't1', count: 1 }] });
+    const inc = C.normalizeState({ tasks: [], sources: ['QQ'], profile: { name: '备份名字', className: '一班' }, imports: [{ source: '微信', at: 't1', count: 1 }, { source: 'QQ', at: 't2', count: 3 }] });
+    const r = C.mergeBackup(cur, inc);
+    a.deepEqual(r.sources.sort(), ['QQ', '微信']);
+    a.equal(r.profile.name, '本机名字');
+    a.equal(r.profile.className, '一班');
+    a.equal(r.imports.length, 2, 'identical import records are not duplicated');
+  });
+
+  // ----------------------------------------------------------- backupReminder
+  test('backupReminder: quiet when there is nothing to lose or a fresh backup', () => {
+    const now = Date.parse('2026-11-18T00:00:00Z');
+    a.equal(C.backupReminder('', 0, now), null);
+    a.equal(C.backupReminder('2026-11-17T00:00:00Z', 5, now), null);
+  });
+
+  test('backupReminder: nags after seven days and when never backed up', () => {
+    const now = Date.parse('2026-11-18T00:00:00Z');
+    a.equal(C.backupReminder('2026-11-01T00:00:00Z', 5, now).days, 17);
+    const never = C.backupReminder('', 5, now);
+    a.equal(never.days, null);
+    a.ok(never.text.includes('还没有'));
+  });
+
   // ------------------------------------------------------------------- same
   test('same: key order does not matter, array order does', () => {
     a.ok(S.same({ a: 1, b: 2 }, { b: 2, a: 1 }));
